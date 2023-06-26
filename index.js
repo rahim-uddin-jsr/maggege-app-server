@@ -15,7 +15,26 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+const verifyJWT = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  console.log({ authorization });
+  if (!authorization) {
+    return res
+      .status(401)
+      .send({ error: true, message: "Unauthorized response" });
+  }
+  const token = authorization.split(" ")[1];
 
+  jwt.verify(token, process.env.jwt_secret, (err, decoded) => {
+    if (err) {
+      return res
+        .status(401)
+        .send({ error: true, message: "Unauthorized response" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
 async function run() {
   try {
     console.log(
@@ -32,6 +51,12 @@ async function run() {
       );
       console.log(token);
       res.send({ token });
+    });
+
+    // get all users
+    app.get("/users", verifyJWT, async (req, res) => {
+      const result = await userCollection.find().toArray();
+      res.send(result);
     });
     // add register users
     app.post("/users", async (req, res) => {
