@@ -1,11 +1,24 @@
 const express = require("express");
 const app = express();
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
+
 require("dotenv").config();
 const jwt = require("jsonwebtoken");
+const ws = require("ws");
 const port = process.env.PORT || 5000;
-app.use(cors());
+app.use(
+  cors({
+    credentials: true,
+    origin: `${process.env.Client_Url}`,
+  })
+);
 app.use(express.json());
+app.use(cookieParser());
+
+const server = app.listen(port, () => {
+  console.log("massage app server run on port=", port);
+});
 const { MongoClient, ServerApiVersion } = require("mongodb");
 const uri = `mongodb+srv://${process.env.DB_User}:${process.env.DB_Pass}@cluster0.vt0qgrn.mongodb.net/?retryWrites=true&w=majority`;
 const client = new MongoClient(uri, {
@@ -17,7 +30,6 @@ const client = new MongoClient(uri, {
 });
 const verifyJWT = (req, res, next) => {
   const authorization = req.headers.authorization;
-  console.log({ authorization });
   if (!authorization) {
     return res
       .status(401)
@@ -41,20 +53,26 @@ async function run() {
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
     const userCollection = client.db("ZenChat").collection("userCOllection");
+    const messagesCollection = client
+      .db("ZenChat")
+      .collection("messagesCollection");
     app.post("/jwt", (req, res) => {
       const token = jwt.sign(
         {
           data: req?.body,
         },
         `${process.env.jwt_secret}`,
+        {},
         { expiresIn: "1h" }
       );
-      console.log(token);
-      res.send({ token });
+      res
+        .cookie("token", token, { secure: true, sameSite: "none" })
+        .send({ token });
     });
 
     // get all users
     app.get("/users", verifyJWT, async (req, res) => {
+      console.log("cookies=", req.cookies);
       const result = await userCollection.find().toArray();
       res.send(result);
     });
@@ -71,6 +89,43 @@ async function run() {
       const result = await userCollection.insertOne(userData);
       res.send(result);
     });
+
+    // web server
+    const wss = new ws.WebSocketServer({ server });
+
+    wss.on("connection", async (connection, req) => {
+      // connection.send("hello");
+      // const result = await messagesCollection.insertOne({ text: "hello" });
+      const cookies = req.headers.cookie;
+      if (cookies) {
+        const tokenString = cookies
+          .split(";")
+          .find((str) => str.startsWith("token="));
+        const token = tokenString.split("=")[1];
+        jwt.verify(token, process.env.jwt_secret, (err, decoded) => {
+          if (err) throw err;
+          console.log(decoded);
+          console.log({ decoded });
+          const uid = decoded.data.uid;
+          const userName = decoded.data.userName;
+          const photoURL = decoded.data.photoURL;
+          connection.userId = uid;
+          connection.username = userName;
+          connection.userPhoto = photoURL;
+        });
+      }
+      [...wss.clients].forEach((client) => {
+        client.send(
+          JSON.stringify({
+            online: [...wss.clients].map((c) => ({
+              userId: c.userId,
+              userName: c.username,
+              userPhoto: c.userPhoto,
+            })),
+          })
+        );
+      });
+    });
   } finally {
     // await client.close();
   }
@@ -81,6 +136,26 @@ app.get("/", (req, res) => {
   res.send("massage app Api running");
 });
 
-app.listen(port, () => {
-  console.log("massage app server run on port=", port);
-});
+// app.listen(port, () => {
+//   console.log("massage app server run on port=", port);
+// });
+
+// const wss = new ws.WebSocketServer({ server });
+
+// wss.on("connection", (connection, req) => {
+//   connection.send("hello");
+//   const cookies = req.headers.cookie;
+//   if (cookies) {
+//     const tokenString = cookies
+//       .split(";")
+//       .find((str) => str.startsWith("token="));
+//     const token = tokenString.split("=")[1];
+//     jwt.verify(token, process.env.jwt_secret, (err, decoded) => {
+//       if (err) throw err;
+//       console.log(decoded);
+//       const uid = decoded.data.uid;
+//       connection.userId = uid;
+//     });
+//   }
+//   console.log([...wss.clients].map((c) => c.userId));
+// });
