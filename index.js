@@ -72,7 +72,7 @@ async function run() {
 
     // get all users
     app.get("/users", verifyJWT, async (req, res) => {
-      console.log("cookies=", req.cookies);
+      // console.log("cookies=", req.cookies);
       const result = await userCollection.find().toArray();
       res.send(result);
     });
@@ -94,8 +94,31 @@ async function run() {
     const wss = new ws.WebSocketServer({ server });
 
     wss.on("connection", async (connection, req) => {
+      connection.on("message", async (message) => {
+        const messageData = JSON.parse(message.toString());
+        const { recipient, text } = messageData;
+        const createdAt = Date.now();
+        messageData.createdAt = createdAt;
+        const result = await messagesCollection.insertOne(messageData);
+        const inserted = await messagesCollection.findOne({
+          _id: result.insertedId,
+        });
+        if (recipient) {
+          [...wss.clients]
+            .filter((c) => c.userId === recipient)
+            .forEach((c) =>
+              c.send(
+                JSON.stringify({
+                  text,
+                  sender: connection.userId,
+                  id: inserted._id,
+                  time: Date.now(),
+                })
+              )
+            );
+        }
+      });
       // connection.send("hello");
-      // const result = await messagesCollection.insertOne({ text: "hello" });
       const cookies = req.headers.cookie;
       if (cookies) {
         const tokenString = cookies
@@ -104,8 +127,7 @@ async function run() {
         const token = tokenString.split("=")[1];
         jwt.verify(token, process.env.jwt_secret, (err, decoded) => {
           if (err) throw err;
-          console.log(decoded);
-          console.log({ decoded });
+
           const uid = decoded.data.uid;
           const userName = decoded.data.userName;
           const photoURL = decoded.data.photoURL;
@@ -114,6 +136,7 @@ async function run() {
           connection.userPhoto = photoURL;
         });
       }
+
       [...wss.clients].forEach((client) => {
         client.send(
           JSON.stringify({
@@ -135,27 +158,3 @@ run().catch(console.dir);
 app.get("/", (req, res) => {
   res.send("massage app Api running");
 });
-
-// app.listen(port, () => {
-//   console.log("massage app server run on port=", port);
-// });
-
-// const wss = new ws.WebSocketServer({ server });
-
-// wss.on("connection", (connection, req) => {
-//   connection.send("hello");
-//   const cookies = req.headers.cookie;
-//   if (cookies) {
-//     const tokenString = cookies
-//       .split(";")
-//       .find((str) => str.startsWith("token="));
-//     const token = tokenString.split("=")[1];
-//     jwt.verify(token, process.env.jwt_secret, (err, decoded) => {
-//       if (err) throw err;
-//       console.log(decoded);
-//       const uid = decoded.data.uid;
-//       connection.userId = uid;
-//     });
-//   }
-//   console.log([...wss.clients].map((c) => c.userId));
-// });
